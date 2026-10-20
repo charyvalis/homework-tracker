@@ -67,23 +67,34 @@ async function api(body){
 }
 
 /* ============ 學生／家長端 ============ */
-function studentView(){
-  const saved = sessionStorage.getItem('hw_code');
+async function studentView(){
+  const savedCode = sessionStorage.getItem('hw_code'), savedCls = localStorage.getItem('hw_cls') || '';
   app.innerHTML = `<div class="card"><h1>學生作業缺交通知看板</h1>
-    <p class="hint" style="text-align:center">請輸入 <b>6 碼代碼</b>（生日 4 碼 + 座號 2 碼）<br>例：7 月 19 日生、座號 27 號 → 請輸入 071927</p>
+    <p class="hint" style="text-align:center">請先選班級，再輸入 <b>6 碼代碼</b>（生日 4 碼 + 座號 2 碼）<br>例：7 月 19 日生、座號 27 號 → 請輸入 071927</p>
+    <select id="cls" style="margin-bottom:10px;text-align:center"><option value="">班級載入中…</option></select>
     <input id="code" inputmode="numeric" maxlength="6" placeholder="請輸入 6 碼" style="text-align:center;font-size:22px;font-weight:800">
     <button id="go">查詢作業狀況</button><div class="err" id="err"></div></div>`;
-  const go = async code => {
+  let classes = [];
+  try{ classes = (await api({action:'classes'})).classes || []; }catch(e){ $('#err').textContent = '連線失敗，請稍後再試'; }
+  $('#cls').innerHTML = (classes.length ? '<option value="">請選擇班級</option>' : '<option value="">尚未建立班級</option>')
+    + classes.map(c => `<option value="${esc(c)}">${esc(c)} 班</option>`).join('');
+  if(classes.includes(savedCls)) $('#cls').value = savedCls; else if(classes.length === 1) $('#cls').value = classes[0];
+  const go = async (cls, code) => {
     $('#err').textContent = '查詢中…';
     try{
-      const r = await api({action:'query', code});
+      const r = await api({action:'query', cls, code});
       if(!r.ok){ $('#err').textContent = r.error || '查詢失敗'; return; }
-      sessionStorage.setItem('hw_code', code); showResult(r);
+      sessionStorage.setItem('hw_code', code); localStorage.setItem('hw_cls', cls); showResult(r);
     }catch(e){ $('#err').textContent = '連線失敗，請稍後再試'; }
   };
-  $('#go').onclick = () => { const c = $('#code').value.trim(); if(!/^\d{6}$/.test(c)){ $('#err').textContent='請輸入 6 位數字'; return; } go(c); };
+  $('#go').onclick = () => {
+    const cls = $('#cls').value, c = $('#code').value.trim();
+    if(!cls){ $('#err').textContent = '請先選擇班級'; return; }
+    if(!/^\d{6}$/.test(c)){ $('#err').textContent = '請輸入 6 位數字'; return; }
+    go(cls, c);
+  };
   $('#code').onkeydown = e => { if(e.key==='Enter') $('#go').click(); };
-  if(saved) go(saved);
+  if(savedCode && $('#cls').value) go($('#cls').value, savedCode);
 }
 function showResult(r){
   let tab = r.items.some(i=>i.status==='missing') ? 'missing' : 'all';
@@ -91,7 +102,7 @@ function showResult(r){
   const draw = () => {
     const list = r.items.filter(i => tab==='missing' ? i.status==='missing' : tab==='submitted' ? i.status!=='missing' : true);
     app.innerHTML = `<div class="card"><h1>學生作業缺交通知看板</h1>
-      <div class="who"><span>座號：${r.seat} 號 學生</span><a id="sw">換其他代碼</a></div>
+      <div class="who"><span>${esc(r.cls||'')} 班　座號：${r.seat} 號 學生</span><a id="sw">換其他代碼</a></div>
       <div class="stats" style="margin-top:16px">
         <div class="stat">尚未完成<b style="color:var(--no)">${pending}</b></div>
         <div class="stat">已繳交(含遲交)<b style="color:var(--ok)">${r.items.length-pending}</b></div></div>
@@ -105,44 +116,80 @@ function showResult(r){
 }
 
 /* ============ 老師端 ============ */
-let T = {pw:'', data:null, aid:null};
+let T = {pw:'', data:null, aid:null, cls:''};
+async function loadAll(){
+  let r = await api({action:'load', pw:T.pw, cls:T.cls});
+  if(!r.ok) return r;
+  if(r.classes.length && !r.classes.includes(T.cls)){ T.cls = r.classes[0]; r = await api({action:'load', pw:T.pw, cls:T.cls}); }
+  if(!r.classes.length) T.cls = '';
+  sessionStorage.setItem('hw_tcls', T.cls);
+  T.data = r;
+  if(!r.assignments.some(x=>x.id===T.aid)) T.aid = (r.assignments[0]||{}).id;
+  return r;
+}
+async function reload(){ const r = await loadAll(); if(r.ok) teacherView(); else teacherLogin(r.error); }
+function logout(){ sessionStorage.removeItem('hw_pw'); T = {pw:'', data:null, aid:null, cls:''}; teacherLogin(); }
 function teacherLogin(msg=''){
   app.innerHTML = `<div class="card"><h1>導師登記頁</h1><input id="pw" type="password" placeholder="老師密碼">
     <button id="ok">登入</button><div class="err">${msg}</div></div>`;
   $('#ok').onclick = async () => {
-    T.pw = $('#pw').value;
-    const r = await api({action:'load', pw:T.pw});
+    T.pw = $('#pw').value; T.cls = sessionStorage.getItem('hw_tcls') || '';
+    const r = await loadAll();
     if(!r.ok) return teacherLogin(r.error||'密碼錯誤');
-    sessionStorage.setItem('hw_pw', T.pw); T.data = r; T.aid = T.aid || (r.assignments[0]||{}).id; teacherView();
+    sessionStorage.setItem('hw_pw', T.pw); teacherView();
   };
   $('#pw').onkeydown = e => { if(e.key==='Enter') $('#ok').click(); };
 }
 const recOf = (aid,seat) => T.data.records.find(x=>x.aid===aid && x.seat===seat);
 function teacherView(){
-  const d = T.data, a = d.assignments.find(x=>x.id===T.aid);
+  const d = T.data;
+  const classCard = `<div class="card"><h2>班級</h2>
+    ${d.classes.length ? `<select id="csel">${d.classes.map(c=>`<option value="${esc(c)}" ${c===T.cls?'selected':''}>${esc(c)} 班</option>`).join('')}</select>` : '<p class="hint">請先新增班級（例如：701）</p>'}
+    <div class="row" style="margin-top:10px"><input id="ncls" placeholder="新班級名稱，例：701"><button class="sec" id="addcls">新增班級</button></div>
+    ${T.cls ? `<button class="sec" id="delcls" style="margin-top:8px;width:100%;color:var(--no)">刪除「${esc(T.cls)}」整個班級</button>` : ''}</div>`;
+  const bindClass = () => {
+    const cs = $('#csel'); if(cs) cs.onchange = e => { T.cls = e.target.value; T.aid = null; reload(); };
+    $('#addcls').onclick = async () => {
+      const n = $('#ncls').value.trim(); if(!n) return;
+      const r = await api({action:'addclass', pw:T.pw, name:n});
+      if(!r.ok){ alert(r.error); return; }
+      T.cls = n; T.aid = null; reload();
+    };
+    const dc = $('#delcls');
+    if(dc) dc.onclick = async () => {
+      const v = prompt('這會刪除「'+T.cls+'」班所有名單與作業，無法復原。\n請輸入班級名稱 '+T.cls+' 確認：');
+      if(v !== T.cls) return;
+      await api({action:'delclass', pw:T.pw, cls:T.cls}); T.aid = null; reload();
+    };
+  };
+  if(!T.cls){
+    app.innerHTML = classCard + `<button class="sec" id="out" style="width:100%">登出</button>`;
+    bindClass(); $('#out').onclick = logout; return;
+  }
+  const a = d.assignments.find(x=>x.id===T.aid);
   const makeup = T.makeup || today();
-  app.innerHTML = `
+  app.innerHTML = classCard + `
   <div class="card"><h2>新增作業項目</h2><input id="nt" placeholder="例：${today()}數卷12回"><button id="add">新增作業</button></div>
   <div class="card"><h2>補交登記設定</h2><p class="hint">指定切換「遲交」時記錄的補交日期：</p>
     <div class="row"><input id="mk" value="${esc(makeup)}"><button class="sec" id="td">今天</button><button class="sec" id="yd">昨天</button></div></div>
-  <div class="card"><h2>批改登記（點擊方塊快速切換）</h2>
+  <div class="card"><h2>${esc(T.cls)} 班批改登記（點擊方塊快速切換）</h2>
     ${d.assignments.length ? `<select id="sel">${d.assignments.map(x=>`<option value="${x.id}" ${x.id===T.aid?'selected':''}>${esc(x.title)}${x.published?'':'（未發布）'}</option>`).join('')}</select>
     <p class="hint" style="margin-top:10px">順序：完成 → 未完成 → 遲交 → 完成（已是遲交時點擊可改日期，留空＝改回完成）</p>
     <div class="grid" id="grid"></div>
     <button id="pub">${a&&a.published?'已發布給學生看・點此取消發布':'批改完成，發布給學生／家長看'}</button>
     <button class="sec" id="del" style="margin-top:8px;width:100%;color:var(--no)">刪除這份作業</button>` : '<p class="muted">尚無作業，請先新增。</p>'}
   </div>
-  <div class="card"><h2>缺交總覽與家長提醒</h2><p class="hint">統計所有「已發布」作業中尚未完成的項目。</p><div id="sum"></div></div>
-  <div class="card"><h2>班級名單設定</h2><p class="hint">每行一位：座號 空格 生日4碼（MMDD）。例：<br>1 0719<br>2 1203<br>伺服器只存加密後的值。重貼會整份覆蓋。</p>
+  <div class="card"><h2>缺交總覽與家長提醒</h2><p class="hint">統計 ${esc(T.cls)} 班所有「已發布」作業中尚未完成的項目。</p><div id="sum"></div></div>
+  <div class="card"><h2>${esc(T.cls)} 班名單設定</h2><p class="hint">每行一位：座號 空格 生日4碼（MMDD）。例：<br>1 0719<br>2 1203<br>伺服器只存加密後的值。重貼會整份覆蓋這個班的名單。</p>
     <textarea id="ro" placeholder="1 0719&#10;2 1203"></textarea><button id="saveRo">儲存名單（目前 ${d.seats.length} 人）</button></div>
   <button class="sec" id="out" style="width:100%">登出</button>`;
-  const reload = async () => { const r = await api({action:'load',pw:T.pw}); if(r.ok){ T.data=r; teacherView(); } else teacherLogin(r.error); };
-  $('#add').onclick = async () => { const t=$('#nt').value.trim(); if(!t) return; const r=await api({action:'add',pw:T.pw,title:t}); if(r.ok){ T.aid=r.id; reload(); } };
+  bindClass();
+  $('#add').onclick = async () => { const t=$('#nt').value.trim(); if(!t) return; const r=await api({action:'add',pw:T.pw,cls:T.cls,title:t}); if(r.ok){ T.aid=r.id; reload(); } else alert(r.error); };
   $('#mk').oninput = e => T.makeup = e.target.value;
   $('#td').onclick = () => { T.makeup = today(); $('#mk').value = T.makeup; };
   $('#yd').onclick = () => { T.makeup = today(1); $('#mk').value = T.makeup; };
-  $('#out').onclick = () => { sessionStorage.removeItem('hw_pw'); T={pw:'',data:null,aid:null}; teacherLogin(); };
-  $('#saveRo').onclick = async () => { const r=await api({action:'roster',pw:T.pw,text:$('#ro').value}); alert(r.ok?'已儲存 '+r.count+' 位':r.error); if(r.ok) reload(); };
+  $('#out').onclick = logout;
+  $('#saveRo').onclick = async () => { const r=await api({action:'roster',pw:T.pw,cls:T.cls,text:$('#ro').value}); alert(r.ok?'已儲存 '+r.count+' 位':r.error); if(r.ok) reload(); };
   if(a){
     $('#sel').onchange = e => { T.aid = e.target.value; teacherView(); };
     $('#pub').onclick = async () => { await api({action:'publish',pw:T.pw,aid:a.id,value:a.published?0:1}); reload(); };
@@ -189,7 +236,7 @@ function drawSummary(){
 /* ============ 啟動 ============ */
 if(location.hash === '#teacher'){
   const pw = sessionStorage.getItem('hw_pw');
-  if(pw){ T.pw = pw; api({action:'load',pw}).then(r => { if(r.ok){ T.data=r; T.aid=(r.assignments[0]||{}).id; teacherView(); } else teacherLogin(); }); }
+  if(pw){ T.pw = pw; T.cls = sessionStorage.getItem('hw_tcls') || ''; loadAll().then(r => { if(r.ok) teacherView(); else teacherLogin(); }); }
   else teacherLogin();
 } else studentView();
 window.onhashchange = () => location.reload();
