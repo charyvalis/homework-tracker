@@ -42,7 +42,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .err{color:var(--no);font-weight:700;margin-top:10px;min-height:1.2em}
 .sum{border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
 .sum .top{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:800}
-.sum .top button{margin:0;padding:8px 12px;font-size:14px}
+.sum .top button{margin:0;padding:8px 12px;font-size:14px;width:auto;flex:none}.sum .top span{white-space:nowrap}
 .sum div.l{color:var(--mute);font-size:14px;margin-top:6px;line-height:1.5}
 .muted{color:var(--mute);font-size:14px}
 .hide{display:none}
@@ -203,14 +203,20 @@ function drawGrid(a){
 function drawSummary(){
   const d = T.data, pub = d.assignments.filter(x=>x.published), box = $('#sum');
   const rows = d.seats.map(seat => ({seat, miss: pub.filter(x=>{const r=recOf(x.id,seat);return r&&r.status==='missing';}).map(x=>x.title)}))
-    .filter(x=>x.miss.length).sort((p,q)=>q.miss.length-p.miss.length);
+    .filter(x=>x.miss.length).sort((p,q)=>p.seat-q.seat);
   if(!rows.length){ box.innerHTML = '<p class="muted">目前沒有缺交 🎉</p>'; return; }
-  box.innerHTML = rows.map(x=>`<div class="sum"><div class="top"><span>${x.seat} 號・缺 ${x.miss.length} 份</span><button data-s="${x.seat}">複製提醒</button></div><div class="l">${x.miss.map(esc).join('、')}</div></div>`).join('');
-  box.querySelectorAll('button').forEach(b => b.onclick = () => {
+  const link = location.origin + location.pathname;
+  const copy = (btn, txt, label) => navigator.clipboard.writeText(txt).then(()=>{ btn.textContent='已複製'; setTimeout(()=>btn.textContent=label,1500); });
+  box.innerHTML = `<button id="copyAll" style="margin:0 0 12px">複製全部缺交名單（${rows.length} 位）</button>`
+    + rows.map(x=>`<div class="sum"><div class="top"><span>${x.seat} 號・缺 ${x.miss.length} 份</span><button data-s="${x.seat}">複製提醒</button></div><div class="l">${x.miss.map(esc).join('、')}</div></div>`).join('');
+  $('#copyAll').onclick = e => {
+    const txt = `【作業提醒】${T.cls}班 目前缺交名單：\n\n${rows.map(x=>x.seat+'號：'+x.miss.join('、')).join('\n')}\n\n請同學盡快補交，家長也可協助提醒，謝謝！\n隨時可查詢：${link}\n（選擇 ${T.cls} 班並輸入座號）`;
+    copy(e.target, txt, `複製全部缺交名單（${rows.length} 位）`);
+  };
+  box.querySelectorAll('button[data-s]').forEach(b => b.onclick = () => {
     const x = rows.find(r=>r.seat==b.dataset.s);
-    const link = location.origin + location.pathname;
-    const txt = `【作業提醒】${T.cls}班 ${x.seat}號同學目前尚缺：\n${x.miss.map(m=>'・'+m).join('\n')}\n請協助孩子盡快補交，謝謝您！\n也可隨時查詢：${link}\n（選擇班級並輸入座號）`;
-    navigator.clipboard.writeText(txt).then(()=>{ b.textContent='已複製'; setTimeout(()=>b.textContent='複製提醒',1500); });
+    const txt = `【作業提醒】${T.cls}班 ${x.seat}號 家長您好：\n孩子目前尚缺以下作業：\n${x.miss.map(m=>'・'+m).join('\n')}\n麻煩協助提醒孩子盡快補交，謝謝您！\n隨時可查詢：${link}\n（選擇 ${T.cls} 班並輸入座號 ${x.seat} 號）`;
+    copy(b, txt, '複製提醒');
   });
 }
 
