@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>學生作業缺交通知看板（生日版）</title>
+<style>
+:root{--bg:#f4f6fb;--card:#fff;--ink:#111827;--mute:#64748b;--line:#d9dee8;--navy:#111827;
+--ok-bg:#dcfce7;--ok-bd:#86efac;--ok:#166534;--no-bg:#fee2e2;--no-bd:#fca5a5;--no:#991b1b;--late-bg:#fef3c7;--late-bd:#fcd34d;--late:#92400e}
+@media(prefers-color-scheme:dark){:root{--bg:#0f172a;--card:#1e293b;--ink:#f1f5f9;--mute:#94a3b8;--line:#334155;--navy:#f1f5f9;
+--ok-bg:#14532d;--ok-bd:#166534;--ok:#bbf7d0;--no-bg:#7f1d1d;--no-bd:#991b1b;--no:#fecaca;--late-bg:#78350f;--late-bd:#92400e;--late:#fde68a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang TC","Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;padding:16px 16px 48px}
+.wrap{max-width:560px;margin:0 auto}
+.card{background:var(--card);border-radius:20px;padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+h1{font-size:22px;text-align:center;margin:8px 0 16px}
+h2{font-size:18px;margin:0 0 12px}
+p.hint{color:var(--mute);font-size:14px;margin:0 0 10px;line-height:1.5}
+input,select,textarea{width:100%;font:inherit;font-size:16px;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink)}
+textarea{min-height:110px}
+button{font:inherit;font-weight:700;cursor:pointer;border:0;border-radius:12px;padding:13px 16px;background:var(--navy);color:var(--card);width:100%;margin-top:10px}
+button.sec{background:var(--bg);color:var(--ink);width:auto;margin:0}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #3b82f6;outline-offset:2px}
+.row{display:flex;gap:8px;align-items:center}.row>input{flex:1}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
+.tile{border:2px solid;border-radius:14px;padding:14px 4px;text-align:center;font-weight:800;font-size:18px;cursor:pointer;margin:0;width:auto;line-height:1.3}
+.tile small{display:block;font-size:13px;font-weight:700}
+.tile.done{background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok)}
+.tile.missing{background:var(--no-bg);border-color:var(--no-bd);color:var(--no)}
+.tile.late{background:var(--late-bg);border-color:var(--late-bd);color:var(--late)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.stat{border:1.5px solid var(--line);border-radius:16px;text-align:center;padding:16px 4px;color:var(--mute)}
+.stat b{display:block;font-size:44px;line-height:1.2}
+.tabs{display:flex;gap:8px;margin:16px 0}
+.tabs button{margin:0;padding:12px 4px;font-size:14px;background:var(--bg);color:var(--ink);border:1.5px solid var(--line)}
+.tabs button.on{background:var(--navy);color:var(--card)}
+.item{display:flex;justify-content:space-between;align-items:center;border:1.5px solid var(--line);border-radius:14px;padding:16px;margin-bottom:10px;font-weight:700}
+.badge{font-size:14px;padding:6px 14px;border-radius:10px}
+.badge.done{background:var(--ok-bg);color:var(--ok)}.badge.missing{background:var(--no-bg);color:var(--no)}.badge.late{background:var(--late-bg);color:var(--late)}
+.who{display:flex;justify-content:space-between;align-items:center;background:var(--bg);border-radius:14px;padding:14px 16px;font-weight:800}
+.who a{color:#2563eb;font-weight:600;cursor:pointer;font-size:15px}
+.err{color:var(--no);font-weight:700;margin-top:10px;min-height:1.2em}
+.sum{border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
+.sum .top{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:800}
+.sum .top button{margin:0;padding:8px 12px;font-size:14px;width:auto;flex:none}.sum .top span{white-space:nowrap}
+.sum div.l{color:var(--mute);font-size:14px;margin-top:6px;line-height:1.5}
+.muted{color:var(--mute);font-size:14px}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script>
+/* ===== 只需要改這一行：貼上 GAS 網頁應用程式網址，或 Cloudflare Worker 網址 ===== */
+const API_URL = "https://dawn-breeze-7489.charyvalis.workers.dev";
+/* ======================================================================== */
+
+const $ = (s, r=document) => r.querySelector(s);
+const app = $('#app');
+const ST = {done:'完成', missing:'未完成', late:'遲交'};
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const today = (d=0) => { const t = new Date(Date.now()-d*864e5); return (t.getMonth()+1)+'/'+t.getDate(); };
+
+async function api(body){
+  const r = await fetch(API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body)});
+  return r.json();
+}
+
+/* ============ 學生／家長端 ============ */
+async function studentView(){
+  const savedCode = sessionStorage.getItem('hw_code'), savedCls = localStorage.getItem('hw_cls') || '';
+  app.innerHTML = `<div class="card"><h1>學生作業缺交通知看板</h1>
+    <p class="hint" style="text-align:center">請先選班級，再輸入 <b>6 碼代碼</b>（生日 4 碼 + 座號 2 碼）<br>例：7 月 19 日生、座號 27 號 → 請輸入 071927</p>
+    <select id="cls" style="margin-bottom:10px;text-align:center"><option value="">班級載入中…</option></select>
+    <input id="code" inputmode="numeric" maxlength="6" placeholder="請輸入 6 碼" style="text-align:center;font-size:22px;font-weight:800">
+    <button id="go">查詢作業狀況</button><div class="err" id="err"></div></div>`;
+  let classes = [];
+  try{ classes = (await api({action:'classes'})).classes || []; }catch(e){ $('#err').textContent = '連線失敗，請稍後再試'; }
+  $('#cls').innerHTML = (classes.length ? '<option value="">請選擇班級</option>' : '<option value="">尚未建立班級</option>')
+    + classes.map(c => `<option value="${esc(c)}">${esc(c)} 班</option>`).join('');
+  if(classes.includes(savedCls)) $('#cls').value = savedCls; else if(classes.length === 1) $('#cls').value = classes[0];
+  const go = async (cls, code) => {
+    $('#err').textContent = '查詢中…';
+    try{
+      const r = await api({action:'query', cls, code});
+      if(!r.ok){ $('#err').textContent = r.error || '查詢失敗'; return; }
+      sessionStorage.setItem('hw_code', code); localStorage.setItem('hw_cls', cls); showResult(r);
+    }catch(e){ $('#err').textContent = '連線失敗，請稍後再試'; }
+  };
+  $('#go').onclick = () => {
+    const cls = $('#cls').value, c = $('#code').value.trim();
+    if(!cls){ $('#err').textContent = '請先選擇班級'; return; }
+    if(!/^\d{6}$/.test(c)){ $('#err').textContent = '請輸入 6 位數字'; return; }
+    go(cls, c);
+  };
+  $('#code').onkeydown = e => { if(e.key==='Enter') $('#go').click(); };
+  if(savedCode && $('#cls').value) go($('#cls').value, savedCode);
+}
+function showResult(r){
+  let tab = r.items.some(i=>i.status==='missing') ? 'missing' : 'all';
+  const pending = r.items.filter(i=>i.status==='missing').length;
+  const draw = () => {
+    const list = r.items.filter(i => tab==='missing' ? i.status==='missing' : tab==='submitted' ? i.status!=='missing' : true);
+    app.innerHTML = `<div class="card"><h1>學生作業缺交通知看板</h1>
+      <div class="who"><span>${esc(r.cls||'')} 班　座號：${r.seat} 號 學生</span><a id="sw">換其他代碼</a></div>
+      <div class="stats" style="margin-top:16px">
+        <div class="stat">尚未完成<b style="color:var(--no)">${pending}</b></div>
+        <div class="stat">已繳交(含遲交)<b style="color:var(--ok)">${r.items.length-pending}</b></div></div>
+      <div class="tabs">${[['missing','尚未完成'],['submitted','已繳交(含遲交)'],['all','全部作業']].map(([k,t])=>`<button data-t="${k}" class="${tab===k?'on':''}">${t}</button>`).join('')}</div>
+      ${list.length ? list.map(i=>`<div class="item"><span>${esc(i.title)}</span><span class="badge ${i.status}">${ST[i.status]}${i.status==='late'&&i.date?' '+esc(i.date):''}</span></div>`).join('') : '<p class="muted" style="text-align:center">這個分類目前沒有作業 🎉</p>'}
+    </div>`;
+    $('#sw').onclick = () => { sessionStorage.removeItem('hw_code'); studentView(); };
+    app.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; draw(); });
+  };
+  draw();
+}
+
+/* ============ 老師端 ============ */
+let T = {pw:'', data:null, aid:null, cls:''};
+async function loadAll(){
+  let r = await api({action:'load', pw:T.pw, cls:T.cls});
+  if(!r.ok) return r;
+  if(r.classes.length && !r.classes.includes(T.cls)){ T.cls = r.classes[0]; r = await api({action:'load', pw:T.pw, cls:T.cls}); }
+  if(!r.classes.length) T.cls = '';
+  sessionStorage.setItem('hw_tcls', T.cls);
+  T.data = r;
+  if(!r.assignments.some(x=>x.id===T.aid)) T.aid = (r.assignments[0]||{}).id;
+  return r;
+}
+async function reload(){ const r = await loadAll(); if(r.ok) teacherView(); else teacherLogin(r.error); }
+function logout(){ sessionStorage.removeItem('hw_pw'); T = {pw:'', data:null, aid:null, cls:''}; teacherLogin(); }
+function teacherLogin(msg=''){
+  app.innerHTML = `<div class="card"><h1>導師登記頁</h1><input id="pw" type="password" placeholder="老師密碼">
+    <button id="ok">登入</button><div class="err">${msg}</div></div>`;
+  $('#ok').onclick = async () => {
+    T.pw = $('#pw').value; T.cls = sessionStorage.getItem('hw_tcls') || '';
+    const r = await loadAll();
+    if(!r.ok) return teacherLogin(r.error||'密碼錯誤');
+    sessionStorage.setItem('hw_pw', T.pw); teacherView();
+  };
+  $('#pw').onkeydown = e => { if(e.key==='Enter') $('#ok').click(); };
+}
+const recOf = (aid,seat) => T.data.records.find(x=>x.aid===aid && x.seat===seat);
+function teacherView(){
+  const d = T.data;
+  const classCard = `<div class="card"><h2>班級</h2>
+    ${d.classes.length ? `<select id="csel">${d.classes.map(c=>`<option value="${esc(c)}" ${c===T.cls?'selected':''}>${esc(c)} 班</option>`).join('')}</select>` : '<p class="hint">請先新增班級（例如：701）</p>'}
+    <div class="row" style="margin-top:10px"><input id="ncls" placeholder="新班級名稱，例：701"><button class="sec" id="addcls">新增班級</button></div>
+    ${T.cls ? `<button class="sec" id="delcls" style="margin-top:8px;width:100%;color:var(--no)">刪除「${esc(T.cls)}」整個班級</button>` : ''}</div>`;
+  const bindClass = () => {
+    const cs = $('#csel'); if(cs) cs.onchange = e => { T.cls = e.target.value; T.aid = null; reload(); };
+    $('#addcls').onclick = async () => {
+      const n = $('#ncls').value.trim(); if(!n) return;
+      const r = await api({action:'addclass', pw:T.pw, name:n});
+      if(!r.ok){ alert(r.error); return; }
+      T.cls = n; T.aid = null; reload();
+    };
+    const dc = $('#delcls');
+    if(dc) dc.onclick = async () => {
+      const v = prompt('這會刪除「'+T.cls+'」班所有名單與作業，無法復原。\n請輸入班級名稱 '+T.cls+' 確認：');
+      if(v !== T.cls) return;
+      await api({action:'delclass', pw:T.pw, cls:T.cls}); T.aid = null; reload();
+    };
+  };
+  if(!T.cls){
+    app.innerHTML = classCard + `<button class="sec" id="out" style="width:100%">登出</button>`;
+    bindClass(); $('#out').onclick = logout; return;
+  }
+  const a = d.assignments.find(x=>x.id===T.aid);
+  const makeup = T.makeup || today();
+  app.innerHTML = classCard + `
+  <div class="card"><h2>新增作業項目</h2><input id="nt" placeholder="例：${today()}數卷12回"><button id="add">新增作業</button></div>
+  <div class="card"><h2>補交登記設定</h2><p class="hint">指定切換「遲交」時記錄的補交日期：</p>
+    <div class="row"><input id="mk" value="${esc(makeup)}"><button class="sec" id="td">今天</button><button class="sec" id="yd">昨天</button></div></div>
+  <div class="card"><h2>${esc(T.cls)} 班批改登記（點擊方塊快速切換）</h2>
+    ${d.assignments.length ? `<select id="sel">${d.assignments.map(x=>`<option value="${x.id}" ${x.id===T.aid?'selected':''}>${esc(x.title)}${x.published?'':'（未發布）'}</option>`).join('')}</select>
+    <p class="hint" style="margin-top:10px">順序：完成 → 未完成 → 遲交 → 完成（已是遲交時點擊可改日期，留空＝改回完成）</p>
+    <div class="grid" id="grid"></div>
+    <button id="pub">${a&&a.published?'已發布給學生看・點此取消發布':'批改完成，發布給學生／家長看'}</button>
+    <button class="sec" id="del" style="margin-top:8px;width:100%;color:var(--no)">刪除這份作業</button>` : '<p class="muted">尚無作業，請先新增。</p>'}
+  </div>
+  <div class="card"><h2>缺交總覽與家長提醒</h2><p class="hint">統計 ${esc(T.cls)} 班所有「已發布」作業中尚未完成的項目。</p><div id="sum"></div></div>
+  <div class="card"><h2>${esc(T.cls)} 班名單設定</h2><p class="hint">每行一位：座號 空格 生日4碼（MMDD）。例：<br>1 0719<br>2 1203<br>伺服器只存加密後的值。重貼會整份覆蓋這個班的名單。</p>
+    <textarea id="ro" placeholder="1 0719&#10;2 1203"></textarea><button id="saveRo">儲存名單（目前 ${d.seats.length} 人）</button></div>
+  <button class="sec" id="out" style="width:100%">登出</button>`;
+  bindClass();
+  $('#add').onclick = async () => { const t=$('#nt').value.trim(); if(!t) return; const r=await api({action:'add',pw:T.pw,cls:T.cls,title:t}); if(r.ok){ T.aid=r.id; reload(); } else alert(r.error); };
+  $('#mk').oninput = e => T.makeup = e.target.value;
+  $('#td').onclick = () => { T.makeup = today(); $('#mk').value = T.makeup; };
+  $('#yd').onclick = () => { T.makeup = today(1); $('#mk').value = T.makeup; };
+  $('#out').onclick = logout;
+  $('#saveRo').onclick = async () => { const r=await api({action:'roster',pw:T.pw,cls:T.cls,text:$('#ro').value}); alert(r.ok?'已儲存 '+r.count+' 位':r.error); if(r.ok) reload(); };
+  if(a){
+    $('#sel').onchange = e => { T.aid = e.target.value; teacherView(); };
+    $('#pub').onclick = async () => { await api({action:'publish',pw:T.pw,aid:a.id,value:a.published?0:1}); reload(); };
+    $('#del').onclick = async () => { if(confirm('確定刪除「'+a.title+'」？')){ await api({action:'del',pw:T.pw,aid:a.id}); T.aid=null; reload(); } };
+    drawGrid(a);
+  }
+  drawSummary();
+}
+function drawGrid(a){
+  const g = $('#grid'); g.innerHTML = '';
+  if(!T.data.seats.length){ g.innerHTML = '<p class="muted">請先在下方設定班級名單</p>'; return; }
+  T.data.seats.forEach(seat => {
+    const rec = recOf(a.id, seat), st = rec ? rec.status : 'done';
+    const b = document.createElement('button'); b.className = 'tile '+st;
+    b.innerHTML = `${seat} 號<small>${ST[st]}${st==='late'&&rec.date?' '+esc(rec.date):''}</small>`;
+    b.onclick = async () => {
+      let ns, date = '';
+      if(st==='done') ns='missing';
+      else if(st==='missing'){ ns='late'; date = $('#mk').value || today(); }
+      else { const v = prompt('補交日期（留空＝改回完成）', rec.date||''); if(v===null) return; if(v.trim()===''){ ns='done'; } else { ns='late'; date=v.trim(); } }
+      T.data.records = T.data.records.filter(x=>!(x.aid===a.id&&x.seat===seat));
+      if(ns!=='done') T.data.records.push({aid:a.id,seat,status:ns,date});
+      drawGrid(a); drawSummary();
+      const r = await api({action:'set',pw:T.pw,aid:a.id,seat,status:ns,date});
+      if(!r.ok) alert('儲存失敗：'+(r.error||''));
+    };
+    g.appendChild(b);
+  });
+}
+function drawSummary(){
+  const d = T.data, pub = d.assignments.filter(x=>x.published), box = $('#sum');
+  const rows = d.seats.map(seat => ({seat, miss: pub.filter(x=>{const r=recOf(x.id,seat);return r&&r.status==='missing';}).map(x=>x.title)}))
+    .filter(x=>x.miss.length).sort((p,q)=>p.seat-q.seat);
+  if(!rows.length){ box.innerHTML = '<p class="muted">目前沒有缺交 🎉</p>'; return; }
+  const link = location.origin + location.pathname;
+  const how = `選擇 ${T.cls} 班，輸入「生日4碼＋座號2碼」`;
+  const copy = (btn, txt, label) => navigator.clipboard.writeText(txt).then(()=>{ btn.textContent='已複製'; setTimeout(()=>btn.textContent=label,1500); });
+  box.innerHTML = `<button id="copyAll" style="margin:0 0 12px">複製全部缺交名單（${rows.length} 位）</button>`
+    + rows.map(x=>`<div class="sum"><div class="top"><span>${x.seat} 號・缺 ${x.miss.length} 份</span><button data-s="${x.seat}">複製提醒</button></div><div class="l">${x.miss.map(esc).join('、')}</div></div>`).join('');
+  $('#copyAll').onclick = e => {
+    const txt = `【作業提醒】${T.cls}班 目前缺交名單：\n\n${rows.map(x=>x.seat+'號：'+x.miss.join('、')).join('\n')}\n\n請同學盡快補交，家長也可協助提醒，謝謝！\n隨時可查詢：${link}\n（${how}）`;
+    copy(e.target, txt, `複製全部缺交名單（${rows.length} 位）`);
+  };
+  box.querySelectorAll('button[data-s]').forEach(b => b.onclick = () => {
+    const x = rows.find(r=>r.seat==b.dataset.s);
+    const txt = `【作業提醒】${T.cls}班 ${x.seat}號 家長您好：\n孩子目前尚缺以下作業：\n${x.miss.map(m=>'・'+m).join('\n')}\n麻煩協助提醒孩子盡快補交，謝謝您！\n隨時可查詢：${link}\n（${how}）`;
+    copy(b, txt, '複製提醒');
+  });
+}
+
+/* ============ 啟動 ============ */
+if(location.hash === '#teacher'){
+  const pw = sessionStorage.getItem('hw_pw');
+  if(pw){ T.pw = pw; T.cls = sessionStorage.getItem('hw_tcls') || ''; loadAll().then(r => { if(r.ok) teacherView(); else teacherLogin(); }); }
+  else teacherLogin();
+} else studentView();
+window.onhashchange = () => location.reload();
+</script>
+</body>
+</html>
