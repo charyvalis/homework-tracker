@@ -42,7 +42,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .err{color:var(--no);font-weight:700;margin-top:10px;min-height:1.2em}
 .sum{border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
 .sum .top{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:800}
-.sum .top button{margin:0;padding:8px 12px;font-size:14px;width:auto;flex:none}.sum .top span{white-space:nowrap}
+.sum .top button{margin:0;padding:8px 12px;font-size:14px;width:auto;flex:none}.rost{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.rost button{margin:0;width:100%;text-align:left;padding:10px 12px;font-size:15px;font-weight:600;background:var(--bg);color:var(--ink);border:1.5px solid var(--line)}.rost button b{margin-right:8px}.sum .top span{min-width:0}
 .sum div.l{color:var(--mute);font-size:14px;margin-top:6px;line-height:1.5}
 .muted{color:var(--mute);font-size:14px}
 .hide{display:none}
@@ -143,6 +143,12 @@ function teacherView(){
     <input id="ro" placeholder="座號，例：1-32">
     <button id="saveRo">儲存班級</button>
     ${hasCls?`<button class="sec" id="delCls" style="margin-top:8px;width:100%;color:var(--no)">刪除目前班級（${esc(T.cls)}）與其所有作業</button>`:''}</div>`;
+  const namesCard = `<div class="card"><h2>${esc(T.cls)} 班名單與姓名</h2>
+      <p class="hint">點一個座號可單獨修改姓名。姓名只有老師登入後看得到，學生與家長那一頁不會顯示。</p>
+      <div class="rost" id="rost">${d.seats.map(s=>{const n=nameOf(s);return `<button data-s="${s}"><b>${s}號</b>${n?esc(n):'<span class="muted">未輸入姓名</span>'}</button>`;}).join('') || '<p class="muted">這個班還沒有名單</p>'}</div>
+      <p class="hint" style="margin-top:14px"><b>匯入姓名</b>：每行「座號 空格 姓名」，可以直接從 Excel 兩欄貼上。名單裡沒有的座號會自動新增。</p>
+      <textarea id="nm" placeholder="1 王小明&#10;2 李小華"></textarea>
+      <button id="saveNames">匯入姓名</button></div>`;
   app.innerHTML = (hasCls ? `
   <div class="card"><h2>選擇班級</h2><select id="clsSel" style="font-weight:800">${d.classes.map(c=>`<option value="${esc(c)}" ${c===T.cls?'selected':''}>${esc(c)} 班（${c===T.cls?d.seats.length+' 人':''}）</option>`.replace('（）','')).join('')}</select></div>
   <div class="card"><h2>新增作業項目</h2><input id="nt" placeholder="例：${today()}數卷12回"><button id="add">新增作業（${esc(T.cls)} 班）</button></div>
@@ -157,7 +163,7 @@ function teacherView(){
   </div>
   <div class="card"><h2>缺交總覽與家長提醒</h2><p class="hint">統計 ${esc(T.cls)} 班所有「已發布」作業中尚未完成的項目。</p><div id="sum"></div></div>` : `
   <div class="card"><h1>老師登記頁</h1><p class="muted" style="text-align:center">還沒有任何班級，請先在下方新增。</p></div>`)
-  + rosterCard + `<button class="sec" id="out" style="width:100%">登出</button>`;
+  + (hasCls ? namesCard : '') + rosterCard + `<button class="sec" id="out" style="width:100%">登出</button>`;
 
   const reload = async () => { const r = await api({action:'load',pw:T.pw,cls:T.cls}); if(r.ok){ T.data=r; T.cls=r.cls; teacherView(); } else teacherLogin(r.error); };
   $('#out').onclick = () => { sessionStorage.removeItem('hw_pw'); T={pw:'',data:null,aid:null,cls:''}; teacherLogin(); };
@@ -167,6 +173,21 @@ function teacherView(){
     alert(r.ok ? cls+' 班已儲存 '+r.count+' 位' : r.error);
     if(r.ok){ T.cls = cls; T.aid = null; reload(); }
   };
+  const bindNames = () => {
+      $('#saveNames').onclick = async () => {
+        const r = await api({action:'names',pw:T.pw,cls:T.cls,text:$('#nm').value});
+        if(!r.ok){ alert(apiErr(r)); return; }
+        alert('已更新 '+r.count+' 位姓名'+(r.added?'，新增 '+r.added+' 個座號':''));
+        reload();
+      };
+      document.querySelectorAll('#rost button').forEach(b => b.onclick = async () => {
+        const seat = Number(b.dataset.s), v = prompt(seat+' 號的姓名（留空＝清除）', nameOf(seat));
+        if(v === null) return;
+        const r = await api({action:'setname',pw:T.pw,cls:T.cls,seat,name:v.trim()});
+        if(r.ok) reload(); else alert(apiErr(r));
+      });
+    };
+  if(hasCls) bindNames();
   if(hasCls){
     $('#clsSel').onchange = async e => { T.cls = e.target.value; T.aid = null; const r = await api({action:'load',pw:T.pw,cls:T.cls}); if(r.ok){ T.data=r; T.aid=(r.assignments[0]||{}).id; teacherView(); } };
     $('#delCls').onclick = async () => { if(confirm('確定刪除 '+T.cls+' 班？這個班的作業與登記紀錄都會一併刪除。')){ await api({action:'delClass',pw:T.pw,cls:T.cls}); T.cls=''; T.aid=null; reload(); } };
@@ -183,12 +204,14 @@ function teacherView(){
     drawSummary();
   }
 }
+const nameOf = seat => { const x = ((T.data && T.data.roster) || []).find(r=>r.seat===seat); return x ? (x.name||'') : ''; };
+const apiErr = r => (r && r.error === 'unknown action') ? '後端還沒更新到支援姓名的版本，請先更新後端程式' : (r && r.error) || '失敗';
 function drawGrid(a){
   const g = $('#grid'); g.innerHTML = '';
   T.data.seats.forEach(seat => {
     const rec = recOf(a.id, seat), st = rec ? rec.status : 'done';
     const b = document.createElement('button'); b.className = 'tile '+st;
-    b.innerHTML = `${seat} 號<small>${ST[st]}${st==='late'&&rec.date?' '+esc(rec.date):''}</small>`;
+    b.innerHTML = `${seat} 號${nameOf(seat)?`<small>${esc(nameOf(seat))}</small>`:''}<small>${ST[st]}${st==='late'&&rec.date?' '+esc(rec.date):''}</small>`;
     b.onclick = async () => {
       let ns, date = '';
       if(st==='done') ns='missing';
@@ -205,20 +228,20 @@ function drawGrid(a){
 }
 function drawSummary(){
   const d = T.data, pub = d.assignments.filter(x=>x.published), box = $('#sum');
-  const rows = d.seats.map(seat => ({seat, miss: pub.filter(x=>{const r=recOf(x.id,seat);return r&&r.status==='missing';}).map(x=>x.title)}))
+  const rows = d.seats.map(seat => ({seat, name:nameOf(seat), miss: pub.filter(x=>{const r=recOf(x.id,seat);return r&&r.status==='missing';}).map(x=>x.title)}))
     .filter(x=>x.miss.length).sort((p,q)=>p.seat-q.seat);
   if(!rows.length){ box.innerHTML = '<p class="muted">目前沒有缺交 🎉</p>'; return; }
   const link = location.origin + location.pathname;
   const copy = (btn, txt, label) => navigator.clipboard.writeText(txt).then(()=>{ btn.textContent='已複製'; setTimeout(()=>btn.textContent=label,1500); });
   box.innerHTML = `<button id="copyAll" style="margin:0 0 12px">複製全部缺交名單（${rows.length} 位）</button>`
-    + rows.map(x=>`<div class="sum"><div class="top"><span>${x.seat} 號・缺 ${x.miss.length} 份</span><button data-s="${x.seat}">複製提醒</button></div><div class="l">${x.miss.map(esc).join('、')}</div></div>`).join('');
+    + rows.map(x=>`<div class="sum"><div class="top"><span>${x.seat} 號${x.name?' '+esc(x.name):''}・缺 ${x.miss.length} 份</span><button data-s="${x.seat}">複製提醒</button></div><div class="l">${x.miss.map(esc).join('、')}</div></div>`).join('');
   $('#copyAll').onclick = e => {
-    const txt = `【作業提醒】${T.cls}班 目前缺交名單：\n\n${rows.map(x=>x.seat+'號：'+x.miss.join('、')).join('\n')}\n\n請同學盡快補交，家長也可協助提醒，謝謝！\n隨時可查詢：${link}\n（選擇 ${T.cls} 班並輸入座號）`;
+    const txt = `【作業提醒】${T.cls}班 目前缺交名單：\n\n${rows.map(x=>x.seat+'號'+(x.name?' '+x.name:'')+'：'+x.miss.join('、')).join('\n')}\n\n請同學盡快補交，家長也可協助提醒，謝謝！\n隨時可查詢：${link}\n（選擇 ${T.cls} 班並輸入座號）`;
     copy(e.target, txt, `複製全部缺交名單（${rows.length} 位）`);
   };
   box.querySelectorAll('button[data-s]').forEach(b => b.onclick = () => {
     const x = rows.find(r=>r.seat==b.dataset.s);
-    const txt = `【作業提醒】${T.cls}班 ${x.seat}號 家長您好：\n孩子目前尚缺以下作業：\n${x.miss.map(m=>'・'+m).join('\n')}\n麻煩協助提醒孩子盡快補交，謝謝您！\n隨時可查詢：${link}\n（選擇 ${T.cls} 班並輸入座號 ${x.seat} 號）`;
+    const txt = `【作業提醒】${T.cls}班 ${x.seat}號${x.name?' '+x.name:''} 家長您好：\n${x.name?x.name+'同學':'孩子'}目前尚缺以下作業：\n${x.miss.map(m=>'・'+m).join('\n')}\n麻煩協助提醒孩子盡快補交，謝謝您！\n隨時可查詢：${link}\n（選擇 ${T.cls} 班並輸入座號 ${x.seat} 號）`;
     copy(b, txt, '複製提醒');
   });
 }
