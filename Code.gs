@@ -1,5 +1,5 @@
 /**
- * 作業缺交通知看板（多班級版・免生日）- Google Apps Script 後端
+ * 作業缺交通知看板（多班級版・免生日・含姓名名單）- Google Apps Script 後端
  * 學生／家長只需選「班級」並輸入「座號」即可查詢。
  *
  * 使用前：專案設定 → 指令碼屬性，新增一個：
@@ -12,7 +12,7 @@ const SS = SpreadsheetApp.getActiveSpreadsheet();
 const H = {
   Assignments: ['id', 'cls', 'title', 'published', 'created'],
   Records: ['aid', 'seat', 'status', 'date'],
-  Roster: ['cls', 'seat']
+  Roster: ['cls', 'seat', 'name']
 };
 
 function sheet(n){ let s = SS.getSheetByName(n); if(!s){ s = SS.insertSheet(n); s.appendRow(H[n]); } return s; }
@@ -22,6 +22,33 @@ function classList(){
   const set = {};
   rows('Roster').forEach(x => { set[String(x[0])] = 1; });
   return Object.keys(set).sort((a,b)=> a.localeCompare(b, 'zh-Hant', {numeric:true}));
+}
+
+function rosterOf(cls){
+  return rows('Roster').filter(x=>String(x[0])===cls)
+    .map(x=>({seat:Number(x[1]), name:String(x[2]||'')}))
+    .sort((a,b)=>a.seat-b.seat);
+}
+function safeText(t){ t = String(t||''); return /^[=+\-@]/.test(t) ? "'" + t : t; }
+function writeRoster(cls, entries){
+  const s = sheet('Roster');
+  s.getRange(1,3).setValue('name');
+  del('Roster', x=>String(x[0])===cls);
+  entries.sort((a,b)=>a.seat-b.seat);
+  if(!entries.length) return;
+  const data = entries.map(e => ["'" + cls, e.seat, safeText(e.name)]);
+  s.getRange(s.getLastRow()+1, 1, data.length, 3).setValues(data);
+}
+// 每行「座號 姓名」，可用空格、Tab（從 Excel 貼上）或逗號分隔
+function parseNames(text){
+  const m = {};
+  String(text||'').split(/\r?\n/).forEach(l => {
+    const t = l.trim().split(/[\t,，、\s]+/).filter(Boolean);
+    if(t.length < 2 || !/^\d{1,2}$/.test(t[0])) return;
+    const n = Number(t[0]), name = t.slice(1).join('').slice(0,20);
+    if(n>=1 && n<=99 && name) m[n] = name;
+  });
+  return m;
 }
 
 function doPost(e){
@@ -49,8 +76,8 @@ function handle(r){
       const ids = {}; as.forEach(a => ids[a.id] = 1);
       const rs = rows('Records').filter(x=>ids[String(x[0])])
         .map(x=>({aid:String(x[0]), seat:Number(x[1]), status:x[2], date:String(x[3]).replace(/^'/,'')}));
-      const seats = rows('Roster').filter(x=>String(x[0])===cls).map(x=>Number(x[1])).sort((a,b)=>a-b);
-      return {ok:true, classes, cls, assignments:as.reverse(), records:rs, seats};
+      const roster = rosterOf(cls), seats = roster.map(x=>x.seat);
+      return {ok:true, classes, cls, assignments:as.reverse(), records:rs, seats, roster};
     }
     case 'add': {
       const id = Date.now().toString(36);
@@ -78,11 +105,29 @@ function handle(r){
       if(!cls) return {ok:false, error:'請輸入班級名稱'};
       const seats = parseSeats(r.text);
       if(!seats.length) return {ok:false, error:'座號格式不正確，例如 1-32'};
-      del('Roster', x=>String(x[0])===cls);
-      const s = sheet('Roster');
-      const data = seats.map(n => ["'" + cls, n]);
-      s.getRange(s.getLastRow()+1, 1, data.length, 2).setValues(data);
+      const old = {}; rosterOf(cls).forEach(e => old[e.seat] = e.name);
+      writeRoster(cls, seats.map(n => ({seat:n, name: old[n] || ''})));
       return {ok:true, count:seats.length, cls};
+    }
+    case 'names': {
+      // 匯入姓名：每行「座號 姓名」；名單裡沒有的座號會自動新增
+      const cls = String(r.cls||'').trim();
+      if(!cls) return {ok:false, error:'請先選擇班級'};
+      const m = parseNames(r.text), keys = Object.keys(m).map(Number);
+      if(!keys.length) return {ok:false, error:'沒有讀到資料，格式：每行「座號 姓名」'};
+      const cur = {}; rosterOf(cls).forEach(e => cur[e.seat] = e.name);
+      let added = 0;
+      keys.forEach(n => { if(!(n in cur)) added++; cur[n] = m[n]; });
+      writeRoster(cls, Object.keys(cur).map(n => ({seat:Number(n), name:cur[n]})));
+      return {ok:true, count:keys.length, added};
+    }
+    case 'setname': {
+      const cls = String(r.cls||'').trim(), seat = Number(r.seat);
+      const cur = rosterOf(cls), e = cur.find(x=>x.seat===seat);
+      if(!e) return {ok:false, error:'找不到這個座號'};
+      e.name = String(r.name||'').trim().slice(0,20);
+      writeRoster(cls, cur);
+      return {ok:true};
     }
     case 'delClass': {
       const cls = String(r.cls);
