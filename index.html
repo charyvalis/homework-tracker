@@ -122,13 +122,13 @@ function showResult(r){
 /* ============ 老師端 ============ */
 let T = {pw:'', data:null, aid:null, cls:''};
 function teacherLogin(msg=''){
-  app.innerHTML = `<div class="card"><h1>老師登記頁</h1><input id="pw" type="password" placeholder="老師密碼">
+  app.innerHTML = `<div class="card"><h1>老師登記頁</h1><input id="pw" type="password" placeholder="老師密碼"><label style="display:flex;gap:8px;align-items:center;justify-content:center;margin:10px 0;font-size:15px"><input id="rem" type="checkbox" checked style="width:auto;margin:0"> 這是我自己的裝置，保持登入</label>
     <button id="ok">登入</button><div class="err">${esc(msg)}</div></div>`;
   $('#ok').onclick = async () => {
     T.pw = $('#pw').value;
     const r = await api({action:'load', pw:T.pw, cls:T.cls});
     if(!r.ok) return teacherLogin(r.error||'密碼錯誤');
-    sessionStorage.setItem('hw_pw', T.pw); T.data = r; T.cls = r.cls; T.aid = (r.assignments[0]||{}).id; teacherView();
+    rememberPw(T.pw); T.data = r; T.cls = r.cls; T.aid = (r.assignments[0]||{}).id; teacherView();
   };
   $('#pw').onkeydown = e => { if(e.key==='Enter') $('#ok').click(); };
 }
@@ -166,7 +166,7 @@ function teacherView(){
   + (hasCls ? namesCard : '') + rosterCard + `<button class="sec" id="out" style="width:100%">登出</button>`;
 
   const reload = async () => { const r = await api({action:'load',pw:T.pw,cls:T.cls}); if(r.ok){ T.data=r; T.cls=r.cls; teacherView(); } else teacherLogin(r.error); };
-  $('#out').onclick = () => { sessionStorage.removeItem('hw_pw'); T={pw:'',data:null,aid:null,cls:''}; teacherLogin(); };
+  $('#out').onclick = () => { forgetPw(); T={pw:'',data:null,aid:null,cls:''}; teacherLogin(); };
   $('#saveRo').onclick = async () => {
     const cls = $('#rc').value.trim();
     const r = await api({action:'roster',pw:T.pw,cls,text:$('#ro').value});
@@ -246,9 +246,35 @@ function drawSummary(){
   });
 }
 
+
+/* ============ 跨裝置同步：保持登入＋自動更新 ============ */
+// 勾「保持登入」的裝置把登入記在這台（localStorage），Mac、iPhone、iPad 各登入一次之後就不用再輸入密碼。
+// 資料本來就存在雲端；老師頁每 20 秒、以及切回這個分頁時重新拉取，別台裝置的登記會自動出現（正在輸入時不打斷）。
+const KEEP = 'hw_pw_keep';
+function savedPw(){ try{ return sessionStorage.getItem('hw_pw') || localStorage.getItem(KEEP) || ''; }catch(e){ return ''; } }
+function rememberPw(pw){ try{ sessionStorage.setItem('hw_pw', pw); const r=document.getElementById('rem'); if(!r || r.checked) localStorage.setItem(KEEP, pw); else localStorage.removeItem(KEEP); }catch(e){} }
+function forgetPw(){ try{ sessionStorage.removeItem('hw_pw'); localStorage.removeItem(KEEP); }catch(e){} }
+let syncBusy = false;
+async function autoSync(){
+  if(syncBusy || document.hidden || location.hash !== '#teacher' || !T.pw || !T.data) return;
+  const a = document.activeElement;
+  if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.id !== 'rem') return; // 正在輸入，晚點再更新
+  syncBusy = true;
+  try{
+    const r = await api({action:'load', pw:T.pw, cls:T.cls});
+    if(r.ok && JSON.stringify(r) !== JSON.stringify(T.data) && T.data){
+      const keepAid = T.aid; T.data = r; T.cls = r.cls;
+      T.aid = r.assignments.some(x=>x.id===keepAid) ? keepAid : (r.assignments[0]||{}).id;
+      const y = window.scrollY; teacherView(); window.scrollTo(0, y);
+    }
+  }catch(e){} finally{ syncBusy = false; }
+}
+setInterval(autoSync, 20000);
+document.addEventListener('visibilitychange', autoSync);
+
 /* ============ 啟動 ============ */
 if(location.hash === '#teacher'){
-  const pw = sessionStorage.getItem('hw_pw');
+  const pw = savedPw();
   if(pw){ T.pw = pw; api({action:'load',pw}).then(r => { if(r.ok){ T.data=r; T.cls=r.cls; T.aid=(r.assignments[0]||{}).id; teacherView(); } else teacherLogin(); }); }
   else teacherLogin();
 } else studentView();
